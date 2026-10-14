@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {handleStory} from '../lib/story-api.mjs';
+const env={DEEPSEEK_API_KEY:'test-secret'},story={source:'毕业后和朋友合租，后来朋友突然搬走，留下一封信。'};
+const request=(action='plan',origin='https://story.test')=>new Request('https://story.test/api/story',{method:'POST',headers:{origin,'Content-Type':'application/json'},body:JSON.stringify({action,story})});
+test('cross-site requests never invoke the provider',async()=>{let invoked=false;const r=await handleStory(request('plan','https://other.test'),env,()=>{invoked=true;});assert.equal(r.status,403);assert.equal(invoked,false);});
+test('configuration endpoint never returns the secret',async()=>{const r=await handleStory(new Request('https://story.test/api/model'),env);const body=await r.text();assert.equal(body.includes(env.DEEPSEEK_API_KEY),false);assert.equal(JSON.parse(body).configured,true);});
+test('provider authentication errors do not expose upstream data',async()=>{const r=await handleStory(request(),env,async()=>new Response('internal secret error',{status:401}));assert.equal(r.status,502);assert.equal((await r.text()).includes('internal secret'),false);});
+test('incomplete model plans fail without overwriting user work',async()=>{const r=await handleStory(request(),env,async()=>Response.json({choices:[{message:{content:'{"title":"标题"}'},finish_reason:'stop'}]}));assert.equal(r.status,502);});
+test('truncated drafts are rejected instead of silently replacing the manuscript',async()=>{const r=await handleStory(request('draft'),env,async()=>Response.json({choices:[{message:{content:'不完整的故事'},finish_reason:'length'}]}));assert.equal(r.status,502);assert.equal((await r.json()).draft,undefined);});
